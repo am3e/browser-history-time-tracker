@@ -1,0 +1,18 @@
+# Personal browsing data — NEVER commit
+History
+History-journal
+*.sqlite
+*.db
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+crash.log
+
+# Original local draft, superseded by index.html
+chrome-history-tracker.html
+
+# OS
+.DS_Store

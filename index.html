@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chrome History Time Tracker</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/sql-wasm.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+
+  :root {
+    --bg: #0e0f11;
+    --surface: #16181c;
+    --border: #2a2d35;
+    --accent: #00e5a0;
+    --accent2: #0099ff;
+    --text: #e8eaf0;
+    --muted: #6b7280;
+    --danger: #ff4d6d;
+    --row-hover: #1e2028;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'IBM Plex Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  header {
+    padding: 32px 40px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: flex-end;
+    gap: 24px;
+  }
+
+  .logo-mark {
+    width: 40px;
+    height: 40px;
+    background: var(--accent);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .logo-mark svg { width: 22px; height: 22px; }
+
+  header h1 {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: -0.3px;
+    color: var(--text);
+    line-height: 1;
+  }
+
+  header p {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 4px;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+
+  .main { padding: 32px 40px; }
+
+  /* Drop Zone */
+  .drop-zone {
+    border: 1.5px dashed var(--border);
+    border-radius: 12px;
+    padding: 60px 40px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    background: var(--surface);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .drop-zone::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse at 50% 0%, rgba(0,229,160,0.06) 0%, transparent 60%);
+    pointer-events: none;
+  }
+
+  .drop-zone:hover, .drop-zone.dragover {
+    border-color: var(--accent);
+    background: #141618;
+  }
+
+  .drop-zone.dragover { transform: scale(1.005); }
+
+  .drop-icon {
+    width: 56px;
+    height: 56px;
+    background: rgba(0,229,160,0.1);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 16px;
+  }
+
+  .drop-icon svg { width: 26px; height: 26px; stroke: var(--accent); }
+
+  .drop-zone h2 {
+    font-size: 17px;
+    font-weight: 500;
+    margin-bottom: 8px;
+  }
+
+  .drop-zone p {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+
+  .drop-zone .path-hint {
+    display: inline-block;
+    margin-top: 16px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    background: var(--bg);
+    padding: 6px 12px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+  }
+
+  .browse-btn {
+    display: inline-block;
+    margin-top: 20px;
+    padding: 9px 20px;
+    background: var(--accent);
+    color: #000;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 6px;
+    cursor: pointer;
+    border: none;
+    letter-spacing: 0.3px;
+  }
+
+  #fileInput { display: none; }
+
+  /* Stats bar */
+  .stats-bar {
+    display: flex;
+    gap: 1px;
+    margin: 24px 0;
+    background: var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    display: none;
+  }
+
+  .stat {
+    flex: 1;
+    background: var(--surface);
+    padding: 14px 18px;
+  }
+
+  .stat-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    margin-bottom: 4px;
+  }
+
+  .stat-value {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--accent);
+  }
+
+  /* Filters */
+  .filters {
+    display: none;
+    gap: 12px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .filter-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .filter-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+  }
+
+  input[type="text"], input[type="date"], select {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+
+  input[type="text"]:focus, input[type="date"]:focus, select:focus {
+    border-color: var(--accent);
+  }
+
+  input[type="text"] { width: 260px; }
+  input[type="date"] { width: 150px; }
+  select { width: 200px; }
+
+  .filter-actions {
+    display: flex;
+    gap: 8px;
+    align-items: flex-end;
+    margin-left: auto;
+  }
+
+  .btn {
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    border: none;
+    letter-spacing: 0.2px;
+  }
+
+  .btn-primary { background: var(--accent); color: #000; }
+  .btn-secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+  .btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* Table */
+  .table-wrap {
+    display: none;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+
+  .table-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .result-count { color: var(--accent); font-weight: 600; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  thead th {
+    background: var(--surface);
+    padding: 10px 14px;
+    text-align: left;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+
+  thead th:hover { color: var(--accent); }
+
+  tbody tr {
+    border-bottom: 1px solid var(--border);
+    transition: background 0.1s;
+  }
+
+  tbody tr:hover { background: var(--row-hover); }
+  tbody tr:last-child { border-bottom: none; }
+
+  td {
+    padding: 10px 14px;
+    vertical-align: middle;
+    line-height: 1.4;
+  }
+
+  .td-time {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+
+  .td-time .date { color: var(--text); font-weight: 500; }
+
+  .td-title { max-width: 340px; }
+  .td-title .title { font-weight: 400; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px; }
+  .td-title .url { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px; margin-top: 2px; }
+
+  .td-domain {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--accent2);
+    white-space: nowrap;
+  }
+
+  .td-duration {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--accent);
+    white-space: nowrap;
+  }
+
+  .tag-input {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text);
+    border-radius: 4px;
+    padding: 3px 7px;
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 12px;
+    width: 120px;
+    outline: none;
+    transition: all 0.15s;
+  }
+
+  .tag-input:hover { border-color: var(--border); }
+  .tag-input:focus { border-color: var(--accent); background: var(--bg); }
+
+  .export-bar {
+    display: none;
+    margin-top: 16px;
+    justify-content: flex-end;
+    gap: 10px;
+  }
+
+  /* Loading */
+  .loading {
+    display: none;
+    text-align: center;
+    padding: 40px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    color: var(--muted);
+  }
+
+  .spinner {
+    width: 32px;
+    height: 32px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    margin: 0 auto 12px;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .error-msg {
+    display: none;
+    background: rgba(255,77,109,0.1);
+    border: 1px solid rgba(255,77,109,0.3);
+    border-radius: 8px;
+    padding: 14px 18px;
+    font-size: 13px;
+    color: var(--danger);
+    margin-top: 16px;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+
+  .pagination {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .page-btn {
+    padding: 5px 10px;
+    border-radius: 4px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    cursor: pointer;
+  }
+
+  .page-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .page-btn:disabled { opacity: 0.3; cursor: default; }
+
+  .page-info { margin: 0 8px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo-mark">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.5" stroke-linecap="round">
+      <circle cx="12" cy="12" r="10"/>
+      <polyline points="12 6 12 12 16 14"/>
+    </svg>
+  </div>
+  <div>
+    <h1>Chrome History Time Tracker</h1>
+    <p>Drop your History file → filter, tag, and export</p>
+  </div>
+</header>
+
+<div class="main">
+
+  <div class="drop-zone" id="dropZone">
+    <div class="drop-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+        <polyline points="17 8 12 3 7 8"/>
+        <line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+    </div>
+    <h2>Drop your Chrome <code style="font-family:IBM Plex Mono;font-size:15px;color:var(--accent)">History</code> file here</h2>
+    <p>Close Chrome first, then locate and drop the file — nothing leaves your device.<br>All processing happens locally in your browser.</p>
+    <div class="path-hint" id="pathHint">Mac: ~/Library/Application Support/Google/Chrome/Default/History</div>
+    <br>
+    <button class="browse-btn" onclick="document.getElementById('fileInput').click()">Browse File</button>
+    <input type="file" id="fileInput" accept="">
+  </div>
+
+  <div class="error-msg" id="errorMsg"></div>
+  <div class="loading" id="loading"><div class="spinner"></div>Parsing history database...</div>
+
+  <div class="stats-bar" id="statsBar">
+    <div class="stat"><div class="stat-label">Total Visits</div><div class="stat-value" id="statTotal">0</div></div>
+    <div class="stat"><div class="stat-label">Unique Domains</div><div class="stat-value" id="statDomains">0</div></div>
+    <div class="stat"><div class="stat-label">Date Range</div><div class="stat-value" style="font-size:13px;padding-top:4px" id="statRange">—</div></div>
+    <div class="stat"><div class="stat-label">Showing</div><div class="stat-value" id="statShowing">0</div></div>
+  </div>
+
+  <div class="filters" id="filters">
+    <div class="filter-group">
+      <div class="filter-label">Search</div>
+      <input type="text" id="searchInput" placeholder="title or URL keyword...">
+    </div>
+    <div class="filter-group">
+      <div class="filter-label">Domain</div>
+      <select id="domainFilter"><option value="">All domains</option></select>
+    </div>
+    <div class="filter-group">
+      <div class="filter-label">From</div>
+      <input type="date" id="dateFrom">
+    </div>
+    <div class="filter-group">
+      <div class="filter-label">To</div>
+      <input type="date" id="dateTo">
+    </div>
+    <div class="filter-actions">
+      <button class="btn btn-secondary" onclick="clearFilters()">Clear</button>
+      <button class="btn btn-primary" onclick="applyFilters()">Apply</button>
+    </div>
+  </div>
+
+  <div class="table-wrap" id="tableWrap">
+    <div class="table-header-row">
+      <span>Results: <span class="result-count" id="resultCount">0</span></span>
+      <span style="font-size:11px">Click <em>Client Tag</em> column to label rows for time tracking</span>
+    </div>
+    <div style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr>
+            <th onclick="sortBy('time')">Date / Time ↕</th>
+            <th onclick="sortBy('title')">Page Title ↕</th>
+            <th onclick="sortBy('domain')">Domain ↕</th>
+            <th>Duration (est.)</th>
+            <th>Client Tag</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+    <div class="pagination" id="pagination">
+      <button class="page-btn" id="prevBtn" onclick="changePage(-1)">← Prev</button>
+      <span class="page-info" id="pageInfo"></span>
+      <button class="page-btn" id="nextBtn" onclick="changePage(1)">Next →</button>
+    </div>
+  </div>
+
+  <div class="export-bar" id="exportBar">
+    <button class="btn btn-secondary" onclick="exportCSV()">⬇ Export filtered CSV</button>
+  </div>
+
+</div>
+
+<script>
+// Detect OS for path hint
+if (navigator.userAgent.includes('Win')) {
+  document.getElementById('pathHint').textContent = 'Windows: %LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\History';
+} else if (navigator.userAgent.includes('Linux')) {
+  document.getElementById('pathHint').textContent = 'Linux: ~/.config/google-chrome/Default/History';
+}
+
+let allRows = [];
+let filteredRows = [];
+let tags = {};
+let sortKey = 'time';
+let sortDir = -1;
+let page = 1;
+const PAGE_SIZE = 100;
+
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => { e.preventDefault(); dropZone.classList.remove('dragover'); handleFile(e.dataTransfer.files[0]); });
+fileInput.addEventListener('change', e => handleFile(e.target.files[0]));
+
+function handleFile(file) {
+  if (!file) return;
+  showLoading(true);
+  showError('');
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    try {
+      const SQL = await initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/${f}` });
+      const db = new SQL.Database(new Uint8Array(e.target.result));
+      
+      // Chrome timestamp: microseconds since Jan 1, 1601
+      const stmt = db.exec(`
+        SELECT 
+          v.visit_time,
+          u.url,
+          u.title,
+          v.visit_duration
+        FROM visits v
+        JOIN urls u ON v.url = u.id
+        ORDER BY v.visit_time DESC
+      `);
+      
+      if (!stmt.length || !stmt[0].values.length) throw new Error('No history data found.');
+      
+      allRows = stmt[0].values.map(r => {
+        const chromeMicro = r[0];
+        // Convert Chrome timestamp to JS Date
+        const ms = (chromeMicro / 1000) - 11644473600000;
+        const dt = new Date(ms);
+        const domain = extractDomain(r[1]);
+        const durationSec = Math.round(r[3] / 1000000);
+        return { time: dt, url: r[1] || '', title: r[2] || r[1] || '(no title)', domain, durationSec };
+      });
+      
+      db.close();
+      initUI();
+    } catch(err) {
+      showError('Could not parse file: ' + err.message + '. Make sure Chrome is closed before copying the History file.');
+    }
+    showLoading(false);
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function timeRange() {
+  let min = Infinity, max = -Infinity;
+  for (const r of allRows) {
+    const t = r.time.getTime();
+    if (t < min) min = t;
+    if (t > max) max = t;
+  }
+  return [new Date(min), new Date(max)];
+}
+
+function extractDomain(url) {
+  try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url; }
+}
+
+function initUI() {
+  // Populate domain filter
+  const domains = [...new Set(allRows.map(r => r.domain))].sort();
+  const sel = document.getElementById('domainFilter');
+  sel.innerHTML = '<option value="">All domains</option>' + domains.map(d => `<option value="${escHtml(d)}">${escHtml(d)}</option>`).join('');
+
+  // Date range
+  const [minD, maxD] = timeRange();
+  document.getElementById('dateFrom').value = fmtDate(minD);
+  document.getElementById('dateTo').value = fmtDate(maxD);
+  
+  // Stats
+  document.getElementById('statTotal').textContent = allRows.length.toLocaleString();
+  document.getElementById('statDomains').textContent = domains.length.toLocaleString();
+  document.getElementById('statRange').textContent = fmtDate(minD) + ' → ' + fmtDate(maxD);
+  
+  document.getElementById('statsBar').style.display = 'flex';
+  document.getElementById('filters').style.display = 'flex';
+  document.getElementById('tableWrap').style.display = 'block';
+  document.getElementById('exportBar').style.display = 'flex';
+  document.getElementById('dropZone').style.display = 'none';
+  
+  applyFilters();
+}
+
+function applyFilters() {
+  const q = document.getElementById('searchInput').value.toLowerCase();
+  const domain = document.getElementById('domainFilter').value;
+  const from = document.getElementById('dateFrom').value ? new Date(document.getElementById('dateFrom').value + 'T00:00:00') : null;
+  const to = document.getElementById('dateTo').value ? new Date(document.getElementById('dateTo').value + 'T23:59:59') : null;
+  
+  filteredRows = allRows.filter(r => {
+    if (q && !r.title.toLowerCase().includes(q) && !r.url.toLowerCase().includes(q)) return false;
+    if (domain && r.domain !== domain) return false;
+    if (from && r.time < from) return false;
+    if (to && r.time > to) return false;
+    return true;
+  });
+  
+  sortRows();
+  page = 1;
+  renderTable();
+}
+
+function clearFilters() {
+  document.getElementById('searchInput').value = '';
+  document.getElementById('domainFilter').value = '';
+  const [minD, maxD] = timeRange();
+  document.getElementById('dateFrom').value = fmtDate(minD);
+  document.getElementById('dateTo').value = fmtDate(maxD);
+  applyFilters();
+}
+
+function sortBy(key) {
+  if (sortKey === key) sortDir *= -1;
+  else { sortKey = key; sortDir = -1; }
+  sortRows();
+  renderTable();
+}
+
+function sortRows() {
+  filteredRows.sort((a, b) => {
+    let av = a[sortKey], bv = b[sortKey];
+    if (sortKey === 'time') { av = av.getTime(); bv = bv.getTime(); }
+    if (av < bv) return sortDir;
+    if (av > bv) return -sortDir;
+    return 0;
+  });
+}
+
+function renderTable() {
+  const start = (page - 1) * PAGE_SIZE;
+  const slice = filteredRows.slice(start, start + PAGE_SIZE);
+  
+  document.getElementById('resultCount').textContent = filteredRows.length.toLocaleString();
+  document.getElementById('statShowing').textContent = filteredRows.length.toLocaleString();
+  
+  const tbody = document.getElementById('tableBody');
+  tbody.innerHTML = slice.map((r, i) => {
+    const idx = start + i;
+    const key = r.url + r.time.getTime();
+    const tag = tags[key] || '';
+    const dur = formatDuration(r.durationSec);
+    return `<tr>
+      <td class="td-time">
+        <div class="date">${r.time.toLocaleDateString('en-CA')}</div>
+        ${r.time.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',hour12:true})}
+      </td>
+      <td class="td-title">
+        <div class="title" title="${escHtml(r.title)}">${escHtml(r.title)}</div>
+        <div class="url"><a href="${escHtml(r.url)}" target="_blank" style="color:inherit;text-decoration:none;" title="${escHtml(r.url)}">${escHtml(r.url)}</a></div>
+      </td>
+      <td class="td-domain">${escHtml(r.domain)}</td>
+      <td class="td-duration">${dur}</td>
+      <td><input class="tag-input" placeholder="client / project" value="${escHtml(tag)}" data-key="${escHtml(key)}"></td>
+    </tr>`;
+  }).join('');
+  
+  // Pagination
+  const totalPages = Math.ceil(filteredRows.length / PAGE_SIZE);
+  document.getElementById('pageInfo').textContent = `Page ${page} of ${totalPages}`;
+  document.getElementById('prevBtn').disabled = page <= 1;
+  document.getElementById('nextBtn').disabled = page >= totalPages;
+}
+
+function changePage(dir) {
+  page += dir;
+  renderTable();
+  window.scrollTo({ top: document.getElementById('tableWrap').offsetTop - 20, behavior: 'smooth' });
+}
+
+document.getElementById('tableBody').addEventListener('input', e => {
+  if (e.target.classList.contains('tag-input')) tags[e.target.dataset.key] = e.target.value;
+});
+
+function formatDuration(sec) {
+  if (!sec || sec <= 0) return '—';
+  if (sec < 60) return sec + 's';
+  if (sec < 3600) return Math.floor(sec/60) + 'm ' + (sec%60) + 's';
+  return Math.floor(sec/3600) + 'h ' + Math.floor((sec%3600)/60) + 'm';
+}
+
+function fmtDate(d) {
+  return d.toLocaleDateString('en-CA');
+}
+
+function escHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function exportCSV() {
+  const rows = filteredRows.map(r => {
+    const key = r.url + r.time.getTime();
+    return [
+      r.time.toLocaleDateString('en-CA'),
+      r.time.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',hour12:true}),
+      csvEsc(r.title),
+      csvEsc(r.url),
+      csvEsc(r.domain),
+      formatDuration(r.durationSec),
+      csvEsc(tags[key] || '')
+    ].join(',');
+  });
+  const header = 'Date,Time,Title,URL,Domain,Duration,Client Tag';
+  const blob = new Blob([header + '\n' + rows.join('\n')], {type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'chrome-history-' + new Date().toISOString().split('T')[0] + '.csv';
+  a.click();
+}
+
+function csvEsc(s) {
+  s = String(s);
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  if (s.includes(',') || s.includes('"') || s.includes('\n')) return '"' + s.replace(/"/g,'""') + '"';
+  return s;
+}
+
+function showLoading(v) {
+  document.getElementById('loading').style.display = v ? 'block' : 'none';
+}
+
+function showError(msg) {
+  const el = document.getElementById('errorMsg');
+  el.textContent = msg;
+  el.style.display = msg ? 'block' : 'none';
+}
+
+// Enter key on filters
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && document.getElementById('filters').style.display !== 'none') applyFilters();
+});
+</script>
+</body>
+</html>
