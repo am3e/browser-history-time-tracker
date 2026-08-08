@@ -16,9 +16,17 @@ All processing happens locally in your browser via [sql.js](https://sql.js.org/)
    - **Windows:** `%LOCALAPPDATA%\Google\Chrome\User Data\Default\History`
    - **Linux:** `~/.config/google-chrome/Default/History`
 3. Drag it onto the page (or copy it somewhere first and drop the copy).
-4. Filter by keyword, domain, or date range; tag rows with a client/project label; export the filtered view as CSV.
+4. Filter by keyword, domain, client, or date range; tag rows with Client/Project labels; export the filtered view as CSV.
 
-Durations are Chrome's own `visit_duration` estimates and are often zero for quick visits.
+### Auto-tagging
+
+Under **⚙ Client mappings**, define rules like "URL contains `github.com/acme` → Client `Acme`". Matching rows are tagged automatically (shown in italics); typing in a row overrides the rule. Rules, manual tags, and settings persist in the browser's localStorage — nothing is uploaded.
+
+### Time estimation
+
+Chrome's own `visit_duration` is unreliable (often zero, and it counts background-tab time), so time-on-page is estimated with **gap-based sessionization**: each visit counts as engaged until your next navigation anywhere, capped by a configurable idle cap (default 15 min). Gaps longer than the cap are treated as idle and the visit falls back to a 30-second floor. This is the same session logic web analytics tools use — a good estimate, but it can't distinguish reading from stepping away, and it only sees the browser.
+
+The **📊 Time report** panel sums engaged hours per client per day for the current filter, and exports as CSV.
 
 ## Development
 

@@ -351,6 +351,71 @@
 
   .tag-input:hover { border-color: var(--border); }
   .tag-input:focus { border-color: var(--accent); background: var(--bg); }
+  .tag-input.auto { color: var(--muted); font-style: italic; }
+
+  .toolbar {
+    display: none;
+    gap: 10px;
+    margin-bottom: 16px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .idle-wrap {
+    margin-left: auto;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .idle-wrap input { width: 64px; }
+
+  .panel {
+    display: none;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    padding: 18px 20px;
+    margin-bottom: 16px;
+  }
+
+  .panel-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--accent);
+    margin-bottom: 6px;
+  }
+
+  .panel-help { font-size: 12px; color: var(--muted); line-height: 1.5; margin-bottom: 12px; }
+
+  .rules-table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+  .rules-table th, .report-table th {
+    text-align: left;
+    background: transparent;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    padding: 4px 12px 4px 0;
+    border-bottom: 1px solid var(--border);
+    cursor: default;
+  }
+  .rules-table th:hover, .report-table th:hover { color: var(--muted); }
+  .rules-table td { padding: 4px 12px 4px 0; }
+  .rules-table input { width: 100%; }
+
+  .del-btn { background: none; border: none; color: var(--danger); cursor: pointer; font-size: 15px; padding: 2px 6px; }
+
+  .report-table { border-collapse: collapse; font-size: 13px; min-width: 420px; }
+  .report-table td { padding: 6px 18px 6px 0; border-bottom: 1px solid var(--border); }
+  .report-table td.num { font-family: 'IBM Plex Mono', monospace; color: var(--accent); }
+  .report-table tr.total td { font-weight: 600; border-bottom: none; }
 
   .export-bar {
     display: none;
@@ -463,6 +528,7 @@
     <div class="stat"><div class="stat-label">Unique Domains</div><div class="stat-value" id="statDomains">0</div></div>
     <div class="stat"><div class="stat-label">Date Range</div><div class="stat-value" style="font-size:13px;padding-top:4px" id="statRange">—</div></div>
     <div class="stat"><div class="stat-label">Showing</div><div class="stat-value" id="statShowing">0</div></div>
+    <div class="stat"><div class="stat-label">Est. Hours (filtered)</div><div class="stat-value" id="statTime">—</div></div>
   </div>
 
   <div class="filters" id="filters">
@@ -473,6 +539,10 @@
     <div class="filter-group">
       <div class="filter-label">Domain</div>
       <select id="domainFilter"><option value="">All domains</option></select>
+    </div>
+    <div class="filter-group">
+      <div class="filter-label">Client</div>
+      <select id="clientFilter"><option value="">All clients</option></select>
     </div>
     <div class="filter-group">
       <div class="filter-label">From</div>
@@ -488,10 +558,36 @@
     </div>
   </div>
 
+  <div class="toolbar" id="toolbar">
+    <button class="btn btn-secondary" onclick="togglePanel('mappingPanel')">⚙ Client mappings</button>
+    <button class="btn btn-secondary" onclick="togglePanel('reportPanel')">📊 Time report</button>
+    <div class="idle-wrap">
+      <span title="A visit counts as engaged time until your next navigation (on any site), up to this cap. Gaps longer than the cap are treated as idle time.">Idle cap (min) ⓘ</span>
+      <input type="number" id="idleCap" min="1" max="60" value="15">
+    </div>
+  </div>
+
+  <div class="panel" id="mappingPanel">
+    <div class="panel-title">URL → Client Mappings</div>
+    <p class="panel-help">When a URL contains the match text, Client and Project fill in automatically (shown in italics). Typing directly in a row overrides the rule for that row; clearing it restores the rule. Rules, manual tags, and settings are saved in this browser.</p>
+    <table class="rules-table">
+      <thead><tr><th style="width:40%">URL contains</th><th style="width:26%">Client</th><th style="width:26%">Project</th><th></th></tr></thead>
+      <tbody id="rulesBody"></tbody>
+    </table>
+    <button class="btn btn-secondary" onclick="addRule()">+ Add rule</button>
+  </div>
+
+  <div class="panel" id="reportPanel">
+    <div class="panel-title">Estimated Hours — Client × Day</div>
+    <p class="panel-help">Engaged time summed for the rows in the current filter. This replaces the pivot-table workflow: filter to what you want, then read (or export) the totals.</p>
+    <div id="reportContent"></div>
+    <div style="margin-top:12px"><button class="btn btn-secondary" onclick="exportReportCSV()">⬇ Export report CSV</button></div>
+  </div>
+
   <div class="table-wrap" id="tableWrap">
     <div class="table-header-row">
       <span>Results: <span class="result-count" id="resultCount">0</span></span>
-      <span style="font-size:11px">Click <em>Client Tag</em> column to label rows for time tracking</span>
+      <span style="font-size:11px">Type in <em>Client</em> / <em>Project</em> to label rows — or set up mappings to auto-tag</span>
     </div>
     <div style="overflow-x:auto">
       <table>
@@ -500,8 +596,9 @@
             <th onclick="sortBy('time')">Date / Time ↕</th>
             <th onclick="sortBy('title')">Page Title ↕</th>
             <th onclick="sortBy('domain')">Domain ↕</th>
-            <th>Duration (est.)</th>
-            <th>Client Tag</th>
+            <th onclick="sortBy('engagedSec')" title="Time until your next navigation anywhere, capped by the idle cap setting">Time (est.) ↕</th>
+            <th>Client</th>
+            <th>Project</th>
           </tr>
         </thead>
         <tbody id="tableBody"></tbody>
@@ -530,7 +627,9 @@ if (navigator.userAgent.includes('Win')) {
 
 let allRows = [];
 let filteredRows = [];
-let tags = {};
+let manualTags = load('chtt-manual-tags', {});
+let rules = load('chtt-rules', []);
+let idleCapMin = load('chtt-idle-cap', 15);
 let sortKey = 'time';
 let sortDir = -1;
 let page = 1;
@@ -579,6 +678,7 @@ function handleFile(file) {
       });
       
       db.close();
+      computeEngaged();
       initUI();
     } catch(err) {
       showError('Could not parse file: ' + err.message + '. Make sure Chrome is closed before copying the History file.');
@@ -618,24 +718,31 @@ function initUI() {
   document.getElementById('statDomains').textContent = domains.length.toLocaleString();
   document.getElementById('statRange').textContent = fmtDate(minD) + ' → ' + fmtDate(maxD);
   
+  document.getElementById('idleCap').value = idleCapMin;
+  renderRules();
+  refreshClientFilter();
+
   document.getElementById('statsBar').style.display = 'flex';
   document.getElementById('filters').style.display = 'flex';
+  document.getElementById('toolbar').style.display = 'flex';
   document.getElementById('tableWrap').style.display = 'block';
   document.getElementById('exportBar').style.display = 'flex';
   document.getElementById('dropZone').style.display = 'none';
-  
+
   applyFilters();
 }
 
 function applyFilters() {
   const q = document.getElementById('searchInput').value.toLowerCase();
   const domain = document.getElementById('domainFilter').value;
+  const client = document.getElementById('clientFilter').value;
   const from = document.getElementById('dateFrom').value ? new Date(document.getElementById('dateFrom').value + 'T00:00:00') : null;
   const to = document.getElementById('dateTo').value ? new Date(document.getElementById('dateTo').value + 'T23:59:59') : null;
-  
+
   filteredRows = allRows.filter(r => {
     if (q && !r.title.toLowerCase().includes(q) && !r.url.toLowerCase().includes(q)) return false;
     if (domain && r.domain !== domain) return false;
+    if (client && (effTag(r, 'client').val || '(untagged)') !== client) return false;
     if (from && r.time < from) return false;
     if (to && r.time > to) return false;
     return true;
@@ -649,6 +756,7 @@ function applyFilters() {
 function clearFilters() {
   document.getElementById('searchInput').value = '';
   document.getElementById('domainFilter').value = '';
+  document.getElementById('clientFilter').value = '';
   const [minD, maxD] = timeRange();
   document.getElementById('dateFrom').value = fmtDate(minD);
   document.getElementById('dateTo').value = fmtDate(maxD);
@@ -679,12 +787,13 @@ function renderTable() {
   document.getElementById('resultCount').textContent = filteredRows.length.toLocaleString();
   document.getElementById('statShowing').textContent = filteredRows.length.toLocaleString();
   
+  document.getElementById('statTime').textContent = hours(filteredRows.reduce((s, r) => s + (r.engagedSec || 0), 0)) + 'h';
+
   const tbody = document.getElementById('tableBody');
-  tbody.innerHTML = slice.map((r, i) => {
-    const idx = start + i;
-    const key = r.url + r.time.getTime();
-    const tag = tags[key] || '';
-    const dur = formatDuration(r.durationSec);
+  tbody.innerHTML = slice.map(r => {
+    const key = keyOf(r);
+    const c = effTag(r, 'client');
+    const p = effTag(r, 'project');
     return `<tr>
       <td class="td-time">
         <div class="date">${r.time.toLocaleDateString('en-CA')}</div>
@@ -695,16 +804,19 @@ function renderTable() {
         <div class="url"><a href="${escHtml(r.url)}" target="_blank" style="color:inherit;text-decoration:none;" title="${escHtml(r.url)}">${escHtml(r.url)}</a></div>
       </td>
       <td class="td-domain">${escHtml(r.domain)}</td>
-      <td class="td-duration">${dur}</td>
-      <td><input class="tag-input" placeholder="client / project" value="${escHtml(tag)}" data-key="${escHtml(key)}"></td>
+      <td class="td-duration">${formatDuration(r.engagedSec)}</td>
+      <td><input class="tag-input${c.auto ? ' auto' : ''}" placeholder="client" value="${escHtml(c.val)}" data-key="${escHtml(key)}" data-field="client"></td>
+      <td><input class="tag-input${p.auto ? ' auto' : ''}" placeholder="project" value="${escHtml(p.val)}" data-key="${escHtml(key)}" data-field="project"></td>
     </tr>`;
   }).join('');
-  
+
   // Pagination
   const totalPages = Math.ceil(filteredRows.length / PAGE_SIZE);
   document.getElementById('pageInfo').textContent = `Page ${page} of ${totalPages}`;
   document.getElementById('prevBtn').disabled = page <= 1;
   document.getElementById('nextBtn').disabled = page >= totalPages;
+
+  if (document.getElementById('reportPanel').style.display === 'block') renderReport();
 }
 
 function changePage(dir) {
@@ -714,8 +826,168 @@ function changePage(dir) {
 }
 
 document.getElementById('tableBody').addEventListener('input', e => {
-  if (e.target.classList.contains('tag-input')) tags[e.target.dataset.key] = e.target.value;
+  if (!e.target.classList.contains('tag-input')) return;
+  const { key, field } = e.target.dataset;
+  (manualTags[key] = manualTags[key] || {})[field] = e.target.value;
+  e.target.classList.remove('auto');
 });
+
+document.getElementById('tableBody').addEventListener('change', e => {
+  if (!e.target.classList.contains('tag-input')) return;
+  const key = e.target.dataset.key;
+  const m = manualTags[key];
+  if (m && !(m.client || '').trim() && !(m.project || '').trim()) delete manualTags[key];
+  save('chtt-manual-tags', manualTags);
+  refreshClientFilter();
+  renderTable();
+});
+
+function keyOf(r) {
+  return r.url + r.time.getTime();
+}
+
+function ruleFor(url) {
+  const u = url.toLowerCase();
+  return rules.find(rl => rl.match && rl.match.trim() && u.includes(rl.match.trim().toLowerCase()));
+}
+
+// Manual tag wins; empty manual field falls through to the first matching rule.
+function effTag(r, field) {
+  const m = manualTags[keyOf(r)];
+  if (m && (m[field] || '').trim()) return { val: m[field], auto: false };
+  const rl = ruleFor(r.url);
+  if (rl && (rl[field] || '').trim()) return { val: rl[field], auto: true };
+  return { val: '', auto: false };
+}
+
+// Gap-based sessionization: a visit is "engaged" until the next navigation
+// anywhere, capped so idle gaps don't count. When the trail goes cold
+// (session end), fall back to Chrome's own duration with a 30s floor.
+function computeEngaged() {
+  const asc = [...allRows].sort((a, b) => a.time - b.time);
+  const cap = idleCapMin * 60;
+  for (let i = 0; i < asc.length; i++) {
+    const gapSec = i + 1 < asc.length ? (asc[i + 1].time - asc[i].time) / 1000 : Infinity;
+    asc[i].engagedSec = gapSec <= cap
+      ? Math.round(gapSec)
+      : Math.min(cap, Math.max(30, asc[i].durationSec || 0));
+  }
+}
+
+function refreshClientFilter() {
+  if (!allRows.length) return;
+  const sel = document.getElementById('clientFilter');
+  const prev = sel.value;
+  const clients = [...new Set(allRows.map(r => effTag(r, 'client').val).filter(Boolean))].sort();
+  sel.innerHTML = '<option value="">All clients</option><option value="(untagged)">(untagged)</option>' +
+    clients.map(c => `<option value="${escHtml(c)}">${escHtml(c)}</option>`).join('');
+  sel.value = [...sel.options].some(o => o.value === prev) ? prev : '';
+}
+
+function renderRules() {
+  document.getElementById('rulesBody').innerHTML = rules.map((rl, i) => `<tr>
+    <td><input value="${escHtml(rl.match || '')}" placeholder="e.g. github.com/acme" data-i="${i}" data-field="match"></td>
+    <td><input value="${escHtml(rl.client || '')}" placeholder="client" data-i="${i}" data-field="client"></td>
+    <td><input value="${escHtml(rl.project || '')}" placeholder="project (optional)" data-i="${i}" data-field="project"></td>
+    <td><button class="del-btn" data-del="${i}" title="Delete rule">✕</button></td>
+  </tr>`).join('');
+}
+
+function addRule() {
+  rules.push({ match: '', client: '', project: '' });
+  renderRules();
+  const inputs = document.querySelectorAll('#rulesBody tr:last-child input');
+  if (inputs.length) inputs[0].focus();
+}
+
+document.getElementById('rulesBody').addEventListener('input', e => {
+  if (!e.target.dataset.field) return;
+  rules[+e.target.dataset.i][e.target.dataset.field] = e.target.value;
+});
+
+document.getElementById('rulesBody').addEventListener('change', () => {
+  save('chtt-rules', rules);
+  if (allRows.length) { refreshClientFilter(); renderTable(); }
+});
+
+document.getElementById('rulesBody').addEventListener('click', e => {
+  if (e.target.dataset.del === undefined) return;
+  rules.splice(+e.target.dataset.del, 1);
+  save('chtt-rules', rules);
+  renderRules();
+  if (allRows.length) { refreshClientFilter(); renderTable(); }
+});
+
+document.getElementById('idleCap').addEventListener('change', e => {
+  idleCapMin = Math.min(60, Math.max(1, +e.target.value || 15));
+  e.target.value = idleCapMin;
+  save('chtt-idle-cap', idleCapMin);
+  if (allRows.length) { computeEngaged(); renderTable(); }
+});
+
+function togglePanel(id) {
+  const el = document.getElementById(id);
+  const opening = el.style.display !== 'block';
+  el.style.display = opening ? 'block' : 'none';
+  if (opening && id === 'reportPanel') renderReport();
+}
+
+function buildReportAgg() {
+  const agg = {};
+  for (const r of filteredRows) {
+    const d = fmtDate(r.time);
+    const c = effTag(r, 'client').val || '(untagged)';
+    (agg[d] = agg[d] || {})[c] = (agg[d][c] || 0) + (r.engagedSec || 0);
+  }
+  return agg;
+}
+
+function renderReport() {
+  const agg = buildReportAgg();
+  const dates = Object.keys(agg).sort();
+  if (!dates.length) {
+    document.getElementById('reportContent').innerHTML = '<p class="panel-help">No rows in the current filter.</p>';
+    return;
+  }
+  const totals = {};
+  let html = '<div style="overflow-x:auto"><table class="report-table"><thead><tr><th>Date</th><th>Client</th><th>Hours</th></tr></thead><tbody>';
+  for (const d of dates) {
+    for (const c of Object.keys(agg[d]).sort()) {
+      totals[c] = (totals[c] || 0) + agg[d][c];
+      html += `<tr><td class="td-time">${d}</td><td>${escHtml(c)}</td><td class="num">${hours(agg[d][c])}</td></tr>`;
+    }
+  }
+  for (const c of Object.keys(totals).sort()) {
+    html += `<tr class="total"><td>Total</td><td>${escHtml(c)}</td><td class="num">${hours(totals[c])}</td></tr>`;
+  }
+  document.getElementById('reportContent').innerHTML = html + '</tbody></table></div>';
+}
+
+function exportReportCSV() {
+  const agg = buildReportAgg();
+  const lines = ['Date,Client,Hours'];
+  for (const d of Object.keys(agg).sort()) {
+    for (const c of Object.keys(agg[d]).sort()) {
+      lines.push([d, csvEsc(c), hours(agg[d][c])].join(','));
+    }
+  }
+  downloadCSV(lines.join('\n'), 'time-report-' + fmtDate(new Date()) + '.csv');
+}
+
+function hours(sec) {
+  return (sec / 3600).toFixed(2);
+}
+
+function load(key, fallback) {
+  try {
+    const v = JSON.parse(localStorage.getItem(key));
+    return v === null || v === undefined ? fallback : v;
+  } catch { return fallback; }
+}
+
+function save(key, val) {
+  try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
+}
 
 function formatDuration(sec) {
   if (!sec || sec <= 0) return '—';
@@ -734,22 +1006,26 @@ function escHtml(str) {
 
 function exportCSV() {
   const rows = filteredRows.map(r => {
-    const key = r.url + r.time.getTime();
     return [
       r.time.toLocaleDateString('en-CA'),
       r.time.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',hour12:true}),
       csvEsc(r.title),
       csvEsc(r.url),
       csvEsc(r.domain),
-      formatDuration(r.durationSec),
-      csvEsc(tags[key] || '')
+      ((r.engagedSec || 0) / 60).toFixed(1),
+      csvEsc(effTag(r, 'client').val),
+      csvEsc(effTag(r, 'project').val)
     ].join(',');
   });
-  const header = 'Date,Time,Title,URL,Domain,Duration,Client Tag';
-  const blob = new Blob([header + '\n' + rows.join('\n')], {type:'text/csv'});
+  const header = 'Date,Time,Title,URL,Domain,Minutes (est.),Client,Project';
+  downloadCSV(header + '\n' + rows.join('\n'), 'chrome-history-' + fmtDate(new Date()) + '.csv');
+}
+
+function downloadCSV(text, filename) {
+  const blob = new Blob([text], { type: 'text/csv' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'chrome-history-' + new Date().toISOString().split('T')[0] + '.csv';
+  a.download = filename;
   a.click();
 }
 
