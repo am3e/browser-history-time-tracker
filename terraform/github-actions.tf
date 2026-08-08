@@ -6,6 +6,14 @@ variable "github_repo" {
   default     = "am3e/browser-history-time-tracker"
 }
 
+# Newer GitHub repos embed owner/repo IDs in the OIDC sub claim
+# (repo:owner@ownerId/name@repoId:...); this repo uses that format.
+variable "github_repo_with_ids" {
+  description = "ID-embedded owner/name form of the repo's OIDC sub prefix"
+  type        = string
+  default     = "am3e@61908637/browser-history-time-tracker@1315539895"
+}
+
 resource "aws_iam_openid_connect_provider" "github" {
   url            = "https://token.actions.githubusercontent.com"
   client_id_list = ["sts.amazonaws.com"]
@@ -31,7 +39,10 @@ data "aws_iam_policy_document" "github_assume" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repo}:ref:refs/heads/main"]
+      values = [
+        "repo:${var.github_repo}:ref:refs/heads/main",
+        "repo:${var.github_repo_with_ids}:ref:refs/heads/main",
+      ]
     }
   }
 }
