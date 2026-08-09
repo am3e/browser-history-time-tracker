@@ -28,7 +28,7 @@ Under **⚙ Client mappings**, define rules like "URL contains `github.com/acme`
 
 Chrome's own `visit_duration` is unreliable (often zero, and it counts background-tab time), so time is estimated with **per-site session clustering**: repeat visits to the same site chain into one session while the gap between them stays within the session gap (default 5 min, configurable). A session's duration is its span — first visit to last — shown in decimal hours on the session's first row (`—` on the rest, so sums never double-count). Isolated single visits get a 1-minute floor. Example: visits recurring from 11:45 AM to 1:45 PM report as one 2.00-hour session. Caveats: it can't distinguish reading from stepping away, sessions on two sites at once both count in full, and it only sees the browser.
 
-The **📊 Time report** panel sums engaged hours per client per day for the current filter, and exports as CSV.
+The **📊 Time report** opens by default: a bar chart of client totals for the current date range first, then the day-by-day breakdown table. Click a bar to drill into that client — the day table and the visits table below filter to it (the chart keeps all clients visible for context); click again to clear. The date range defaults to the current month, with **This month** / **Last month** / **All time** presets in the filter bar. Report exports as CSV.
 
 ## Development
 

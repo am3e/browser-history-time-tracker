@@ -432,6 +432,33 @@
   }
   .num-cell { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--accent); white-space: nowrap; }
 
+  .chart { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+  .bar-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    padding: 3px 8px;
+    border-radius: 6px;
+  }
+  .bar-row:hover { background: var(--row-hover); }
+  .bar-row.selected { background: var(--row-hover); }
+  .bar-row.dimmed .bar-fill { opacity: 0.25; }
+  .bar-label {
+    width: 160px;
+    flex-shrink: 0;
+    font-size: 12px;
+    color: var(--text);
+    text-align: right;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .bar-track { flex: 1; height: 14px; display: flex; align-items: center; }
+  .bar-fill { height: 12px; background: var(--accent); border-radius: 0 4px 4px 0; min-width: 2px; }
+  .bar-fill.untagged { background: var(--muted); }
+  .bar-val { width: 56px; flex-shrink: 0; font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--text); }
+
   .report-table { border-collapse: collapse; font-size: 13px; min-width: 420px; }
   .report-table td { padding: 6px 18px 6px 0; border-bottom: 1px solid var(--border); }
   .report-table td.num { font-family: 'IBM Plex Mono', monospace; color: var(--accent); }
@@ -574,7 +601,9 @@
       <input type="date" id="dateTo">
     </div>
     <div class="filter-actions">
-      <button class="btn btn-secondary" onclick="clearFilters()">Clear</button>
+      <button class="btn btn-secondary" onclick="setMonthFilter(0)">This month</button>
+      <button class="btn btn-secondary" onclick="setMonthFilter(-1)">Last month</button>
+      <button class="btn btn-secondary" onclick="clearFilters()">All time</button>
       <button class="btn btn-primary" onclick="applyFilters()">Apply</button>
     </div>
   </div>
@@ -625,8 +654,8 @@
   </div>
 
   <div class="panel" id="reportPanel">
-    <div class="panel-title">Estimated Hours — Client × Day</div>
-    <p class="panel-help">Engaged time summed for the rows in the current filter. This replaces the pivot-table workflow: filter to what you want, then read (or export) the totals.</p>
+    <div class="panel-title">Time Report</div>
+    <p class="panel-help">Client totals for the current date range — click a bar to drill into that client's day breakdown and visits below.</p>
     <div id="reportContent"></div>
     <div style="margin-top:12px"><button class="btn btn-secondary" onclick="exportReportCSV()">⬇ Export report CSV</button></div>
   </div>
@@ -826,11 +855,10 @@ function initUI() {
   const sel = document.getElementById('domainFilter');
   sel.innerHTML = '<option value="">All domains</option>' + domains.map(d => `<option value="${escHtml(d)}">${escHtml(d)}</option>`).join('');
 
-  // Date range
+  // Default to the current month; stats still show the full data range
   const [minD, maxD] = timeRange();
-  document.getElementById('dateFrom').value = fmtDate(minD);
-  document.getElementById('dateTo').value = fmtDate(maxD);
-  
+  setMonthInputs(0);
+
   // Stats
   document.getElementById('statTotal').textContent = allRows.length.toLocaleString();
   document.getElementById('statDomains').textContent = domains.length.toLocaleString();
@@ -844,6 +872,7 @@ function initUI() {
   document.getElementById('statsBar').style.display = 'flex';
   document.getElementById('filters').style.display = 'flex';
   document.getElementById('toolbar').style.display = 'flex';
+  document.getElementById('reportPanel').style.display = 'block';
   document.getElementById('tableWrap').style.display = 'block';
   document.getElementById('exportBar').style.display = 'flex';
   document.getElementById('dropZone').style.display = 'none';
@@ -851,26 +880,50 @@ function initUI() {
   applyFilters();
 }
 
-function applyFilters() {
-  const q = document.getElementById('searchInput').value.toLowerCase();
-  const domain = document.getElementById('domainFilter').value;
-  const client = document.getElementById('clientFilter').value;
-  const from = document.getElementById('dateFrom').value ? new Date(document.getElementById('dateFrom').value + 'T00:00:00') : null;
-  const to = document.getElementById('dateTo').value ? new Date(document.getElementById('dateTo').value + 'T23:59:59') : null;
+function currentFilters() {
+  return {
+    q: document.getElementById('searchInput').value.toLowerCase(),
+    domain: document.getElementById('domainFilter').value,
+    client: document.getElementById('clientFilter').value,
+    from: document.getElementById('dateFrom').value ? new Date(document.getElementById('dateFrom').value + 'T00:00:00') : null,
+    to: document.getElementById('dateTo').value ? new Date(document.getElementById('dateTo').value + 'T23:59:59') : null,
+  };
+}
 
-  filteredRows = allRows.filter(r => {
-    if (isHidden(r)) return false;
-    if (q && !r.title.toLowerCase().includes(q) && !r.url.toLowerCase().includes(q)) return false;
-    if (domain && r.domain !== domain) return false;
-    if (client && (effTag(r, 'client').val || '(untagged)') !== client) return false;
-    if (from && r.time < from) return false;
-    if (to && r.time > to) return false;
-    return true;
-  });
-  
+function rowPasses(r, f, ignoreClient) {
+  if (isHidden(r)) return false;
+  if (f.q && !r.title.toLowerCase().includes(f.q) && !r.url.toLowerCase().includes(f.q)) return false;
+  if (f.domain && r.domain !== f.domain) return false;
+  if (!ignoreClient && f.client && (effTag(r, 'client').val || '(untagged)') !== f.client) return false;
+  if (f.from && r.time < f.from) return false;
+  if (f.to && r.time > f.to) return false;
+  return true;
+}
+
+function applyFilters() {
+  const f = currentFilters();
+  filteredRows = allRows.filter(r => rowPasses(r, f, false));
   sortRows();
   page = 1;
   renderTable();
+}
+
+// Chart totals keep every client visible while drilled: same filters,
+// minus the client filter.
+function reportRows() {
+  const f = currentFilters();
+  return allRows.filter(r => rowPasses(r, f, true));
+}
+
+function setMonthInputs(offset) {
+  const now = new Date();
+  document.getElementById('dateFrom').value = fmtDate(new Date(now.getFullYear(), now.getMonth() + offset, 1));
+  document.getElementById('dateTo').value = fmtDate(new Date(now.getFullYear(), now.getMonth() + offset + 1, 0));
+}
+
+function setMonthFilter(offset) {
+  setMonthInputs(offset);
+  applyFilters();
 }
 
 function clearFilters() {
@@ -1215,13 +1268,37 @@ function buildReportAgg() {
   return agg;
 }
 
-function renderReport() {
+function renderChartHTML() {
+  const totals = {};
+  for (const r of reportRows()) {
+    const c = effTag(r, 'client').val || '(untagged)';
+    totals[c] = (totals[c] || 0) + (r.engagedSec || 0);
+  }
+  const entries = Object.entries(totals).sort((a, b) => b[1] - a[1]);
+  if (!entries.length) return '';
+  const max = entries[0][1] || 1;
+  const selected = document.getElementById('clientFilter').value;
+  const bars = entries.map(([c, sec]) => {
+    const pct = Math.max(1, Math.round((sec / max) * 100));
+    const cls = ['bar-row'];
+    if (selected === c) cls.push('selected');
+    else if (selected) cls.push('dimmed');
+    return `<div class="${cls.join(' ')}" data-client="${escHtml(c)}" title="${escHtml(c)}: ${hours(sec)}h — click to drill down">
+      <span class="bar-label">${escHtml(c)}</span>
+      <div class="bar-track"><div class="bar-fill${c === '(untagged)' ? ' untagged' : ''}" style="width:${pct}%"></div></div>
+      <span class="bar-val">${hours(sec)}</span>
+    </div>`;
+  }).join('');
+  const hint = selected
+    ? `Drilled into <strong>${escHtml(selected)}</strong> — click its bar again (or another) to change.`
+    : 'Click a bar to drill into that client.';
+  return `<div class="chart">${bars}</div><p class="panel-help">${hint}</p>`;
+}
+
+function renderAggHTML() {
   const agg = buildReportAgg();
   const dates = Object.keys(agg).sort();
-  if (!dates.length) {
-    document.getElementById('reportContent').innerHTML = '<p class="panel-help">No rows in the current filter.</p>';
-    return;
-  }
+  if (!dates.length) return '';
   const totals = {};
   let html = '<div style="overflow-x:auto"><table class="report-table"><thead><tr><th>Date</th><th>Client</th><th>Hours</th></tr></thead><tbody>';
   for (const d of dates) {
@@ -1233,7 +1310,24 @@ function renderReport() {
   for (const c of Object.keys(totals).sort()) {
     html += `<tr class="total"><td>Total</td><td>${escHtml(c)}</td><td class="num">${hours(totals[c])}</td></tr>`;
   }
-  document.getElementById('reportContent').innerHTML = html + '</tbody></table></div>';
+  return html + '</tbody></table></div>';
+}
+
+function renderReport() {
+  const chart = renderChartHTML();
+  const table = renderAggHTML();
+  document.getElementById('reportContent').innerHTML = (chart + table) || '<p class="panel-help">No rows in the current filter.</p>';
+}
+
+document.getElementById('reportContent').addEventListener('click', e => {
+  const row = e.target.closest ? e.target.closest('.bar-row') : null;
+  if (row && row.dataset.client) drillClient(row.dataset.client);
+});
+
+function drillClient(client) {
+  const sel = document.getElementById('clientFilter');
+  sel.value = sel.value === client ? '' : client;
+  applyFilters();
 }
 
 function exportReportCSV() {
