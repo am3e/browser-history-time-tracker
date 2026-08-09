@@ -20,7 +20,9 @@ All processing happens locally in your browser via [sql.js](https://sql.js.org/)
 
 ### Auto-tagging
 
-Under **⚙ Client mappings**, define rules like "URL contains `github.com/acme` → Client `Acme`", then hit **Apply to imported rows** to tag the loaded history and see how many rows matched. Matching rows are tagged automatically (shown in italics); typing in a row overrides the rule. Rules, manual tags, and settings persist in the browser's localStorage — nothing is uploaded.
+Under **⚙ Client mappings**, define rules like "URL contains `github.com/acme` → Client `Acme`", then hit **Apply to imported rows** to tag the loaded history and see how many rows matched. Matching rows are tagged automatically (shown in italics); typing in a row overrides the rule.
+
+**⚡ Auto-map** lists every domain in the import once — with its site name, visit count, and estimated hours — so you can map whole domains to a client/project in one pass, or **Hide** noise domains to exclude them from the table, report, and exports. Precedence: manual row tag > URL rule > domain mapping. Rules, manual tags, and settings persist in the browser's localStorage — nothing is uploaded.
 
 ### Time estimation
 

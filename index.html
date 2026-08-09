@@ -420,6 +420,18 @@
 
   .del-btn { background: none; border: none; color: var(--danger); cursor: pointer; font-size: 15px; padding: 2px 6px; }
 
+  .automap-scroll { max-height: 420px; overflow-y: auto; margin: 12px 0 4px; }
+  .automap-scroll thead th { position: sticky; top: 0; background: var(--surface); z-index: 1; }
+  .automap-site {
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .num-cell { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--accent); white-space: nowrap; }
+
   .report-table { border-collapse: collapse; font-size: 13px; min-width: 420px; }
   .report-table td { padding: 6px 18px 6px 0; border-bottom: 1px solid var(--border); }
   .report-table td.num { font-family: 'IBM Plex Mono', monospace; color: var(--accent); }
@@ -570,6 +582,7 @@
   <div class="toolbar" id="toolbar">
     <button class="btn btn-secondary" onclick="document.getElementById('fileInput').click()">⬆ New file</button>
     <button class="btn btn-secondary" onclick="togglePanel('mappingPanel')">⚙ Client mappings</button>
+    <button class="btn btn-secondary" onclick="togglePanel('autoMapPanel')">⚡ Auto-map</button>
     <button class="btn btn-secondary" onclick="togglePanel('reportPanel')">📊 Time report</button>
     <div class="idle-wrap">
       <span title="A visit counts as engaged time until your next navigation (on any site), up to this cap. Gaps longer than the cap are treated as idle time.">Idle cap (min) ⓘ</span>
@@ -589,6 +602,19 @@
       <button class="btn btn-primary" onclick="applyMappings()">Apply to imported rows</button>
       <span id="applyResult" style="font-size:12px;color:var(--muted)"></span>
     </div>
+  </div>
+
+  <div class="panel" id="autoMapPanel">
+    <div class="panel-title">Auto-map Domains</div>
+    <p class="panel-help">Every domain in your import, deduped — map each once instead of tagging row by row. Manual row tags and URL rules override these. Check <strong>Hide</strong> to drop a domain from the table, report, and exports entirely.</p>
+    <input type="text" id="autoMapSearch" placeholder="filter domains...">
+    <div class="automap-scroll">
+      <table class="rules-table">
+        <thead><tr><th>Domain</th><th>Site</th><th>Visits</th><th>Est. hrs</th><th style="width:16%">Client</th><th style="width:16%">Project</th><th>Hide</th></tr></thead>
+        <tbody id="autoMapBody"></tbody>
+      </table>
+    </div>
+    <p class="panel-help" id="hiddenSummary" style="margin-bottom:0"></p>
   </div>
 
   <div class="panel" id="reportPanel">
@@ -643,7 +669,9 @@ let allRows = [];
 let filteredRows = [];
 let manualTags = load('chtt-manual-tags', {});
 let rules = load('chtt-rules', []);
+let domainMap = load('chtt-domain-map', {});
 let idleCapMin = load('chtt-idle-cap', 15);
+let autoMapStats = null;
 let sortKey = 'time';
 let sortDir = -1;
 let page = 1;
@@ -823,6 +851,7 @@ function applyFilters() {
   const to = document.getElementById('dateTo').value ? new Date(document.getElementById('dateTo').value + 'T23:59:59') : null;
 
   filteredRows = allRows.filter(r => {
+    if (isHidden(r)) return false;
     if (q && !r.title.toLowerCase().includes(q) && !r.url.toLowerCase().includes(q)) return false;
     if (domain && r.domain !== domain) return false;
     if (client && (effTag(r, 'client').val || '(untagged)') !== client) return false;
@@ -934,19 +963,27 @@ function ruleFor(url) {
   return rules.find(rl => rl.match && rl.match.trim() && u.includes(rl.match.trim().toLowerCase()));
 }
 
-// Manual tag wins; empty manual field falls through to the first matching rule.
+// Precedence: manual row tag > URL rule > domain mapping.
 function effTag(r, field) {
   const m = manualTags[keyOf(r)];
   if (m && (m[field] || '').trim()) return { val: m[field], auto: false };
   const rl = ruleFor(r.url);
   if (rl && (rl[field] || '').trim()) return { val: rl[field], auto: true };
+  const dm = domainMap[r.domain];
+  if (dm && (dm[field] || '').trim()) return { val: dm[field], auto: true };
   return { val: '', auto: false };
+}
+
+function isHidden(r) {
+  const dm = domainMap[r.domain];
+  return !!(dm && dm.hide);
 }
 
 // Gap-based sessionization: a visit is "engaged" until the next navigation
 // anywhere, capped so idle gaps don't count. When the trail goes cold
 // (session end), fall back to Chrome's own duration with a 30s floor.
 function computeEngaged() {
+  autoMapStats = null;
   const asc = [...allRows].sort((a, b) => a.time - b.time);
   const cap = idleCapMin * 60;
   for (let i = 0; i < asc.length; i++) {
@@ -961,7 +998,7 @@ function refreshClientFilter() {
   if (!allRows.length) return;
   const sel = document.getElementById('clientFilter');
   const prev = sel.value;
-  const clients = [...new Set(allRows.map(r => effTag(r, 'client').val).filter(Boolean))].sort();
+  const clients = [...new Set(allRows.filter(r => !isHidden(r)).map(r => effTag(r, 'client').val).filter(Boolean))].sort();
   sel.innerHTML = '<option value="">All clients</option><option value="(untagged)">(untagged)</option>' +
     clients.map(c => `<option value="${escHtml(c)}">${escHtml(c)}</option>`).join('');
   sel.value = [...sel.options].some(o => o.value === prev) ? prev : '';
@@ -1011,22 +1048,28 @@ function applyMappings() {
   let matched = 0;
   const clients = new Set();
   for (const r of allRows) {
-    const rl = ruleFor(r.url);
-    if (rl) {
+    if (isHidden(r)) continue;
+    const c = effTag(r, 'client');
+    const p = effTag(r, 'project');
+    if ((c.auto && c.val) || (p.auto && p.val)) {
       matched++;
-      if ((rl.client || '').trim()) clients.add(rl.client.trim());
+      if (c.val) clients.add(c.val);
     }
   }
   refreshClientFilter();
   applyFilters();
-  out.textContent = `${matched.toLocaleString()} of ${allRows.length.toLocaleString()} rows match — ${clients.size} client(s). Table, filter, and report updated.`;
+  out.textContent = `${matched.toLocaleString()} of ${allRows.length.toLocaleString()} rows auto-tagged (URL rules + domain mappings) — ${clients.size} client(s).`;
 }
 
 document.getElementById('idleCap').addEventListener('change', e => {
   idleCapMin = Math.min(60, Math.max(1, +e.target.value || 15));
   e.target.value = idleCapMin;
   save('chtt-idle-cap', idleCapMin);
-  if (allRows.length) { computeEngaged(); renderTable(); }
+  if (allRows.length) {
+    computeEngaged();
+    renderTable();
+    if (document.getElementById('autoMapPanel').style.display === 'block') renderAutoMap();
+  }
 });
 
 function togglePanel(id) {
@@ -1034,7 +1077,79 @@ function togglePanel(id) {
   const opening = el.style.display !== 'block';
   el.style.display = opening ? 'block' : 'none';
   if (opening && id === 'reportPanel') renderReport();
+  if (opening && id === 'autoMapPanel') renderAutoMap();
 }
+
+function buildAutoMapStats() {
+  const stats = {};
+  for (const r of allRows) {
+    const s = stats[r.domain] = stats[r.domain] || { count: 0, sec: 0, titles: {} };
+    s.count++;
+    s.sec += r.engagedSec || 0;
+    if (r.title) s.titles[r.title] = (s.titles[r.title] || 0) + 1;
+  }
+  for (const d of Object.keys(stats)) {
+    const top = Object.entries(stats[d].titles).sort((a, b) => b[1] - a[1])[0];
+    stats[d].site = top ? top[0] : '';
+    delete stats[d].titles;
+  }
+  return stats;
+}
+
+function renderAutoMap() {
+  if (!allRows.length) {
+    document.getElementById('autoMapBody').innerHTML = '<tr><td colspan="7" class="panel-help">Import a History file first.</td></tr>';
+    return;
+  }
+  if (!autoMapStats) autoMapStats = buildAutoMapStats();
+  const q = document.getElementById('autoMapSearch').value.trim().toLowerCase();
+  const domains = Object.keys(autoMapStats)
+    .filter(d => !q || d.toLowerCase().includes(q) || (autoMapStats[d].site || '').toLowerCase().includes(q))
+    .sort((a, b) => autoMapStats[b].count - autoMapStats[a].count);
+
+  document.getElementById('autoMapBody').innerHTML = domains.map(d => {
+    const s = autoMapStats[d];
+    const m = domainMap[d] || {};
+    return `<tr>
+      <td class="td-domain">${escHtml(d)}</td>
+      <td class="automap-site" title="${escHtml(s.site)}">${escHtml(s.site)}</td>
+      <td class="num-cell">${s.count.toLocaleString()}</td>
+      <td class="num-cell">${hours(s.sec)}</td>
+      <td><input value="${escHtml(m.client || '')}" placeholder="client" data-domain="${escHtml(d)}" data-field="client"></td>
+      <td><input value="${escHtml(m.project || '')}" placeholder="project" data-domain="${escHtml(d)}" data-field="project"></td>
+      <td style="text-align:center"><input type="checkbox" ${m.hide ? 'checked' : ''} data-domain="${escHtml(d)}" data-field="hide"></td>
+    </tr>`;
+  }).join('');
+  updateHiddenSummary();
+}
+
+function updateHiddenSummary() {
+  const el = document.getElementById('hiddenSummary');
+  const hiddenDomains = Object.keys(domainMap).filter(d => domainMap[d].hide);
+  if (!hiddenDomains.length) { el.textContent = ''; return; }
+  const rowCount = allRows.filter(isHidden).length;
+  el.textContent = `${hiddenDomains.length} domain(s) hidden — ${rowCount.toLocaleString()} rows excluded from the table, report, and exports.`;
+}
+
+document.getElementById('autoMapBody').addEventListener('input', e => {
+  const { domain, field } = e.target.dataset;
+  if (!domain || !field || field === 'hide') return;
+  (domainMap[domain] = domainMap[domain] || {})[field] = e.target.value;
+});
+
+document.getElementById('autoMapBody').addEventListener('change', e => {
+  const { domain, field } = e.target.dataset;
+  if (!domain || !field) return;
+  const m = domainMap[domain] = domainMap[domain] || {};
+  if (field === 'hide') m.hide = e.target.checked;
+  if (!(m.client || '').trim() && !(m.project || '').trim() && !m.hide) delete domainMap[domain];
+  save('chtt-domain-map', domainMap);
+  refreshClientFilter();
+  applyFilters();
+  updateHiddenSummary();
+});
+
+document.getElementById('autoMapSearch').addEventListener('input', renderAutoMap);
 
 function buildReportAgg() {
   const agg = {};
