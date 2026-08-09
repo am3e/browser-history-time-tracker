@@ -351,7 +351,9 @@
 
   .tag-input:hover { border-color: var(--border); }
   .tag-input:focus { border-color: var(--accent); background: var(--bg); }
-  .tag-input.auto { color: var(--muted); font-style: italic; }
+  .tag-input.auto, .rules-table input.auto { color: var(--muted); font-style: italic; }
+
+  .report-metrics { display: flex; gap: 40px; margin-bottom: 16px; }
 
   .toolbar {
     display: none;
@@ -890,8 +892,8 @@ function currentFilters() {
   };
 }
 
-function rowPasses(r, f, ignoreClient) {
-  if (isHidden(r)) return false;
+function rowPasses(r, f, ignoreClient, includeHidden) {
+  if (!includeHidden && isHidden(r)) return false;
   if (f.q && !r.title.toLowerCase().includes(f.q) && !r.url.toLowerCase().includes(f.q)) return false;
   if (f.domain && r.domain !== f.domain) return false;
   if (!ignoreClient && f.client && (effTag(r, 'client').val || '(untagged)') !== f.client) return false;
@@ -913,6 +915,13 @@ function applyFilters() {
 function reportRows() {
   const f = currentFilters();
   return allRows.filter(r => rowPasses(r, f, true));
+}
+
+// Rows excluded only because their domain is hidden, within the same
+// search/domain/date window (client filter ignored).
+function hiddenRows() {
+  const f = currentFilters();
+  return allRows.filter(r => isHidden(r) && rowPasses(r, f, true, true));
 }
 
 function setMonthInputs(offset) {
@@ -1093,17 +1102,22 @@ document.getElementById('rulesBody').addEventListener('input', e => {
   rules[+e.target.dataset.i][e.target.dataset.field] = e.target.value;
 });
 
-document.getElementById('rulesBody').addEventListener('change', () => {
+function rulesChanged() {
   save('chtt-rules', rules);
-  if (allRows.length) { refreshClientFilter(); renderTable(); }
-});
+  autoMapStats = null;
+  if (!allRows.length) return;
+  refreshClientFilter();
+  renderTable();
+  if (document.getElementById('autoMapPanel').style.display === 'block') renderAutoMap();
+}
+
+document.getElementById('rulesBody').addEventListener('change', rulesChanged);
 
 document.getElementById('rulesBody').addEventListener('click', e => {
   if (e.target.dataset.del === undefined) return;
   rules.splice(+e.target.dataset.del, 1);
-  save('chtt-rules', rules);
   renderRules();
-  if (allRows.length) { refreshClientFilter(); renderTable(); }
+  rulesChanged();
 });
 
 function applyMappings() {
@@ -1124,8 +1138,10 @@ function applyMappings() {
       if (c.val) clients.add(c.val);
     }
   }
+  autoMapStats = null;
   refreshClientFilter();
   applyFilters();
+  if (document.getElementById('autoMapPanel').style.display === 'block') renderAutoMap();
   out.textContent = `${matched.toLocaleString()} of ${allRows.length.toLocaleString()} rows auto-tagged (URL rules + domain mappings) — ${clients.size} client(s).`;
 }
 
@@ -1156,6 +1172,14 @@ function buildAutoMapStats() {
     s.sec += r.engagedSec || 0;
     if (r.title) s.titles[r.title] = (s.titles[r.title] || 0) + 1;
   }
+  for (const r of allRows) {
+    const s = stats[r.domain];
+    if (s.ruleClient && s.ruleProject) continue;
+    const rl = ruleFor(r.url);
+    if (!rl) continue;
+    if (!s.ruleClient && (rl.client || '').trim()) s.ruleClient = rl.client.trim();
+    if (!s.ruleProject && (rl.project || '').trim()) s.ruleProject = rl.project.trim();
+  }
   for (const d of Object.keys(stats)) {
     const top = Object.entries(stats[d].titles).sort((a, b) => b[1] - a[1])[0];
     stats[d].site = top ? top[0] : '';
@@ -1178,13 +1202,15 @@ function renderAutoMap() {
   document.getElementById('autoMapBody').innerHTML = domains.map(d => {
     const s = autoMapStats[d];
     const m = domainMap[d] || {};
+    const mc = (m.client || '').trim(), mp = (m.project || '').trim();
+    const cAuto = !mc && s.ruleClient, pAuto = !mp && s.ruleProject;
     return `<tr>
       <td class="td-domain">${escHtml(d)}</td>
       <td class="automap-site" title="${escHtml(s.site)}">${escHtml(s.site)}</td>
       <td class="num-cell">${s.count.toLocaleString()}</td>
       <td class="num-cell">${hours(s.sec)}</td>
-      <td><input value="${escHtml(m.client || '')}" placeholder="client" data-domain="${escHtml(d)}" data-field="client"></td>
-      <td><input value="${escHtml(m.project || '')}" placeholder="project" data-domain="${escHtml(d)}" data-field="project"></td>
+      <td><input class="${cAuto ? 'auto' : ''}" value="${escHtml(mc || s.ruleClient || '')}" placeholder="client" title="${cAuto ? 'From URL rule — type to override for this domain' : ''}" data-domain="${escHtml(d)}" data-field="client"></td>
+      <td><input class="${pAuto ? 'auto' : ''}" value="${escHtml(mp || s.ruleProject || '')}" placeholder="project" title="${pAuto ? 'From URL rule — type to override for this domain' : ''}" data-domain="${escHtml(d)}" data-field="project"></td>
       <td style="text-align:center"><input type="checkbox" ${m.hide ? 'checked' : ''} data-domain="${escHtml(d)}" data-field="hide"></td>
     </tr>`;
   }).join('');
@@ -1268,9 +1294,9 @@ function buildReportAgg() {
   return agg;
 }
 
-function renderChartHTML() {
+function renderChartHTML(rows) {
   const totals = {};
-  for (const r of reportRows()) {
+  for (const r of rows) {
     const c = effTag(r, 'client').val || '(untagged)';
     totals[c] = (totals[c] || 0) + (r.engagedSec || 0);
   }
@@ -1314,9 +1340,15 @@ function renderAggHTML() {
 }
 
 function renderReport() {
-  const chart = renderChartHTML();
-  const table = renderAggHTML();
-  document.getElementById('reportContent').innerHTML = (chart + table) || '<p class="panel-help">No rows in the current filter.</p>';
+  const rows = reportRows();
+  const totalSec = rows.reduce((s, r) => s + (r.engagedSec || 0), 0);
+  const hiddenSec = hiddenRows().reduce((s, r) => s + (r.engagedSec || 0), 0);
+  const metrics = `<div class="report-metrics">
+    <div><div class="stat-label">Total Hours</div><div class="stat-value">${hours(totalSec)}</div></div>
+    <div><div class="stat-label">Hidden Hours</div><div class="stat-value" style="color:var(--muted)" title="Time on hidden domains in this date range — not included in the totals">${hours(hiddenSec)}</div></div>
+  </div>`;
+  const body = renderChartHTML(rows) + renderAggHTML();
+  document.getElementById('reportContent').innerHTML = metrics + (body || '<p class="panel-help">No rows in the current filter.</p>');
 }
 
 document.getElementById('reportContent').addEventListener('click', e => {
@@ -1330,13 +1362,24 @@ function drillClient(client) {
   applyFilters();
 }
 
+function buildReportDetail() {
+  if (!autoMapStats) autoMapStats = buildAutoMapStats();
+  const agg = {};
+  for (const r of filteredRows) {
+    const key = fmtDate(r.time) + '\u0000' + (effTag(r, 'client').val || '(untagged)') + '\u0000' + r.domain;
+    agg[key] = (agg[key] || 0) + (r.engagedSec || 0);
+  }
+  return Object.keys(agg).sort().filter(k => agg[k] > 0).map(k => {
+    const [date, client, domain] = k.split('\u0000');
+    const site = (autoMapStats[domain] && autoMapStats[domain].site) || '';
+    return { date, client, domain, site, sec: agg[k] };
+  });
+}
+
 function exportReportCSV() {
-  const agg = buildReportAgg();
-  const lines = ['Date,Client,Hours'];
-  for (const d of Object.keys(agg).sort()) {
-    for (const c of Object.keys(agg[d]).sort()) {
-      lines.push([d, csvEsc(c), hours(agg[d][c])].join(','));
-    }
+  const lines = ['Date,Client,Domain,Site,Hours'];
+  for (const row of buildReportDetail()) {
+    lines.push([row.date, csvEsc(row.client), csvEsc(row.domain), csvEsc(row.site), hours(row.sec)].join(','));
   }
   downloadCSV(lines.join('\n'), 'time-report-' + fmtDate(new Date()) + '.csv');
 }
@@ -1410,6 +1453,10 @@ function showError(msg) {
   el.textContent = msg;
   el.style.display = msg ? 'block' : 'none';
 }
+
+// Date/select filters take effect immediately; search still uses Apply/Enter
+['dateFrom', 'dateTo', 'domainFilter', 'clientFilter'].forEach(id =>
+  document.getElementById(id).addEventListener('change', () => { if (allRows.length) applyFilters(); }));
 
 // Enter key on filters
 document.addEventListener('keydown', e => {
