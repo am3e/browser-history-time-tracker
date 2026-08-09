@@ -585,8 +585,8 @@
     <button class="btn btn-secondary" onclick="togglePanel('autoMapPanel')">⚡ Auto-map</button>
     <button class="btn btn-secondary" onclick="togglePanel('reportPanel')">📊 Time report</button>
     <div class="idle-wrap">
-      <span title="A visit counts as engaged time until your next navigation (on any site), up to this cap. Gaps longer than the cap are treated as idle time.">Idle cap (min) ⓘ</span>
-      <input type="number" id="idleCap" min="1" max="60" value="15">
+      <span title="Visits to the same site within this many minutes chain into one session. The session's duration is its span — first visit to last visit — shown in hours on the session's first row.">Session gap (min) ⓘ</span>
+      <input type="number" id="sessionGap" min="1" max="60" value="5">
     </div>
   </div>
 
@@ -643,7 +643,7 @@
             <th onclick="sortBy('time')">Date / Time ↕</th>
             <th onclick="sortBy('title')">Page Title ↕</th>
             <th onclick="sortBy('domain')">Domain ↕</th>
-            <th onclick="sortBy('engagedSec')" title="Time until your next navigation anywhere, capped by the idle cap setting">Time (est.) ↕</th>
+            <th onclick="sortBy('engagedSec')" title="Per-site session span in hours: repeat visits within the session gap chain into one session, and its total shows on the session's first row (— on the rest)">Hours (est.) ↕</th>
             <th>Client</th>
             <th>Project</th>
           </tr>
@@ -677,7 +677,7 @@ let filteredRows = [];
 let manualTags = load('chtt-manual-tags', {});
 let rules = load('chtt-rules', []);
 let domainMap = load('chtt-domain-map', {});
-let idleCapMin = load('chtt-idle-cap', 15);
+let sessionGapMin = load('chtt-session-gap', 5);
 let autoMapStats = null;
 let sortKey = 'time';
 let sortDir = -1;
@@ -836,7 +836,7 @@ function initUI() {
   document.getElementById('statDomains').textContent = domains.length.toLocaleString();
   document.getElementById('statRange').textContent = fmtDate(minD) + ' → ' + fmtDate(maxD);
   
-  document.getElementById('idleCap').value = idleCapMin;
+  document.getElementById('sessionGap').value = sessionGapMin;
   document.getElementById('hideThreshold').value = load('chtt-hide-threshold', 20);
   renderRules();
   refreshClientFilter();
@@ -987,18 +987,25 @@ function isHidden(r) {
   return !!(dm && dm.hide);
 }
 
-// Gap-based sessionization: a visit is "engaged" until the next navigation
-// anywhere, capped so idle gaps don't count. When the trail goes cold
-// (session end), fall back to Chrome's own duration with a 30s floor.
+// Per-site session clustering: visits to the same domain chain together
+// while the gap between them is within the session gap. A session's
+// duration is its span (first visit to last), assigned to the first row
+// so sums never double-count; isolated single visits get a 1-min floor.
 function computeEngaged() {
   autoMapStats = null;
-  const asc = [...allRows].sort((a, b) => a.time - b.time);
-  const cap = idleCapMin * 60;
-  for (let i = 0; i < asc.length; i++) {
-    const gapSec = i + 1 < asc.length ? (asc[i + 1].time - asc[i].time) / 1000 : Infinity;
-    asc[i].engagedSec = gapSec <= cap
-      ? Math.round(gapSec)
-      : Math.min(cap, Math.max(30, asc[i].durationSec || 0));
+  const gapSec = sessionGapMin * 60;
+  const byDomain = {};
+  for (const r of allRows) (byDomain[r.domain] = byDomain[r.domain] || []).push(r);
+  for (const d of Object.keys(byDomain)) {
+    const vs = byDomain[d].sort((a, b) => a.time - b.time);
+    let start = 0;
+    for (let i = 1; i <= vs.length; i++) {
+      if (i < vs.length && (vs[i].time - vs[i - 1].time) / 1000 <= gapSec) continue;
+      const cluster = vs.slice(start, i);
+      const span = Math.round((cluster[cluster.length - 1].time - cluster[0].time) / 1000);
+      cluster.forEach((r, j) => { r.engagedSec = j === 0 ? (cluster.length >= 2 ? span : 60) : 0; });
+      start = i;
+    }
   }
 }
 
@@ -1069,10 +1076,10 @@ function applyMappings() {
   out.textContent = `${matched.toLocaleString()} of ${allRows.length.toLocaleString()} rows auto-tagged (URL rules + domain mappings) — ${clients.size} client(s).`;
 }
 
-document.getElementById('idleCap').addEventListener('change', e => {
-  idleCapMin = Math.min(60, Math.max(1, +e.target.value || 15));
-  e.target.value = idleCapMin;
-  save('chtt-idle-cap', idleCapMin);
+document.getElementById('sessionGap').addEventListener('change', e => {
+  sessionGapMin = Math.min(60, Math.max(1, +e.target.value || 5));
+  e.target.value = sessionGapMin;
+  save('chtt-session-gap', sessionGapMin);
   if (allRows.length) {
     computeEngaged();
     renderTable();
@@ -1257,9 +1264,7 @@ function save(key, val) {
 
 function formatDuration(sec) {
   if (!sec || sec <= 0) return '—';
-  if (sec < 60) return sec + 's';
-  if (sec < 3600) return Math.floor(sec/60) + 'm ' + (sec%60) + 's';
-  return Math.floor(sec/3600) + 'h ' + Math.floor((sec%3600)/60) + 'm';
+  return hours(sec);
 }
 
 function fmtDate(d) {
@@ -1278,12 +1283,12 @@ function exportCSV() {
       csvEsc(r.title),
       csvEsc(r.url),
       csvEsc(r.domain),
-      ((r.engagedSec || 0) / 60).toFixed(1),
+      hours(r.engagedSec || 0),
       csvEsc(effTag(r, 'client').val),
       csvEsc(effTag(r, 'project').val)
     ].join(',');
   });
-  const header = 'Date,Time,Title,URL,Domain,Minutes (est.),Client,Project';
+  const header = 'Date,Time,Title,URL,Domain,Hours (est.),Client,Project';
   downloadCSV(header + '\n' + rows.join('\n'), 'chrome-history-' + fmtDate(new Date()) + '.csv');
 }
 

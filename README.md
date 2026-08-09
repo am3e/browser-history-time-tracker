@@ -26,7 +26,7 @@ Under **⚙ Client mappings**, define rules like "URL contains `github.com/acme`
 
 ### Time estimation
 
-Chrome's own `visit_duration` is unreliable (often zero, and it counts background-tab time), so time-on-page is estimated with **gap-based sessionization**: each visit counts as engaged until your next navigation anywhere, capped by a configurable idle cap (default 15 min). Gaps longer than the cap are treated as idle and the visit falls back to a 30-second floor. This is the same session logic web analytics tools use — a good estimate, but it can't distinguish reading from stepping away, and it only sees the browser.
+Chrome's own `visit_duration` is unreliable (often zero, and it counts background-tab time), so time is estimated with **per-site session clustering**: repeat visits to the same site chain into one session while the gap between them stays within the session gap (default 5 min, configurable). A session's duration is its span — first visit to last — shown in decimal hours on the session's first row (`—` on the rest, so sums never double-count). Isolated single visits get a 1-minute floor. Example: visits recurring from 11:45 AM to 1:45 PM report as one 2.00-hour session. Caveats: it can't distinguish reading from stepping away, sessions on two sites at once both count in full, and it only sees the browser.
 
 The **📊 Time report** panel sums engaged hours per client per day for the current filter, and exports as CSV.
 
