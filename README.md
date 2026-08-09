@@ -15,12 +15,12 @@ All processing happens locally in your browser via [sql.js](https://sql.js.org/)
    - **Mac:** `~/Library/Application Support/Google/Chrome/Default/History`
    - **Windows:** `%LOCALAPPDATA%\Google\Chrome\User Data\Default\History`
    - **Linux:** `~/.config/google-chrome/Default/History`
-3. Drag it onto the page (or copy it somewhere first and drop the copy).
+3. Drag it onto the page (or copy it somewhere first and drop the copy). The file is cached in the browser's IndexedDB, so it restores automatically next visit — **⬆ New file** replaces it.
 4. Filter by keyword, domain, client, or date range; tag rows with Client/Project labels; export the filtered view as CSV.
 
 ### Auto-tagging
 
-Under **⚙ Client mappings**, define rules like "URL contains `github.com/acme` → Client `Acme`". Matching rows are tagged automatically (shown in italics); typing in a row overrides the rule. Rules, manual tags, and settings persist in the browser's localStorage — nothing is uploaded.
+Under **⚙ Client mappings**, define rules like "URL contains `github.com/acme` → Client `Acme`", then hit **Apply to imported rows** to tag the loaded history and see how many rows matched. Matching rows are tagged automatically (shown in italics); typing in a row overrides the rule. Rules, manual tags, and settings persist in the browser's localStorage — nothing is uploaded.
 
 ### Time estimation
 

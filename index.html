@@ -393,6 +393,14 @@
 
   .panel-help { font-size: 12px; color: var(--muted); line-height: 1.5; margin-bottom: 12px; }
 
+  .saved-note {
+    display: none;
+    margin-top: 16px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+  }
+
   .rules-table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
   .rules-table th, .report-table th {
     text-align: left;
@@ -522,6 +530,7 @@
 
   <div class="error-msg" id="errorMsg"></div>
   <div class="loading" id="loading"><div class="spinner"></div>Parsing history database...</div>
+  <div class="saved-note" id="savedNote"></div>
 
   <div class="stats-bar" id="statsBar">
     <div class="stat"><div class="stat-label">Total Visits</div><div class="stat-value" id="statTotal">0</div></div>
@@ -559,6 +568,7 @@
   </div>
 
   <div class="toolbar" id="toolbar">
+    <button class="btn btn-secondary" onclick="document.getElementById('fileInput').click()">⬆ New file</button>
     <button class="btn btn-secondary" onclick="togglePanel('mappingPanel')">⚙ Client mappings</button>
     <button class="btn btn-secondary" onclick="togglePanel('reportPanel')">📊 Time report</button>
     <div class="idle-wrap">
@@ -574,7 +584,11 @@
       <thead><tr><th style="width:40%">URL contains</th><th style="width:26%">Client</th><th style="width:26%">Project</th><th></th></tr></thead>
       <tbody id="rulesBody"></tbody>
     </table>
-    <button class="btn btn-secondary" onclick="addRule()">+ Add rule</button>
+    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap">
+      <button class="btn btn-secondary" onclick="addRule()">+ Add rule</button>
+      <button class="btn btn-primary" onclick="applyMappings()">Apply to imported rows</button>
+      <span id="applyResult" style="font-size:12px;color:var(--muted)"></span>
+    </div>
   </div>
 
   <div class="panel" id="reportPanel">
@@ -645,48 +659,117 @@ fileInput.addEventListener('change', e => handleFile(e.target.files[0]));
 
 function handleFile(file) {
   if (!file) return;
-  showLoading(true);
   showError('');
   const reader = new FileReader();
   reader.onload = async (e) => {
-    try {
-      const SQL = await initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/${f}` });
-      const db = new SQL.Database(new Uint8Array(e.target.result));
-      
-      // Chrome timestamp: microseconds since Jan 1, 1601
-      const stmt = db.exec(`
-        SELECT 
-          v.visit_time,
-          u.url,
-          u.title,
-          v.visit_duration
-        FROM visits v
-        JOIN urls u ON v.url = u.id
-        ORDER BY v.visit_time DESC
-      `);
-      
-      if (!stmt.length || !stmt[0].values.length) throw new Error('No history data found.');
-      
-      allRows = stmt[0].values.map(r => {
-        const chromeMicro = r[0];
-        // Convert Chrome timestamp to JS Date
-        const ms = (chromeMicro / 1000) - 11644473600000;
-        const dt = new Date(ms);
-        const domain = extractDomain(r[1]);
-        const durationSec = Math.round(r[3] / 1000000);
-        return { time: dt, url: r[1] || '', title: r[2] || r[1] || '(no title)', domain, durationSec };
-      });
-      
-      db.close();
-      computeEngaged();
-      initUI();
-    } catch(err) {
-      showError('Could not parse file: ' + err.message + '. Make sure Chrome is closed before copying the History file.');
+    if (await parseBuffer(e.target.result)) {
+      await saveFileBuffer(e.target.result, file.name);
+      showSavedNote(file.name, Date.now(), false);
     }
-    showLoading(false);
   };
   reader.readAsArrayBuffer(file);
 }
+
+async function parseBuffer(buffer) {
+  showLoading(true);
+  try {
+    const SQL = await initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/${f}` });
+    const db = new SQL.Database(new Uint8Array(buffer));
+
+    // Chrome timestamp: microseconds since Jan 1, 1601
+    const stmt = db.exec(`
+      SELECT
+        v.visit_time,
+        u.url,
+        u.title,
+        v.visit_duration
+      FROM visits v
+      JOIN urls u ON v.url = u.id
+      ORDER BY v.visit_time DESC
+    `);
+
+    if (!stmt.length || !stmt[0].values.length) throw new Error('No history data found.');
+
+    allRows = stmt[0].values.map(r => {
+      const chromeMicro = r[0];
+      // Convert Chrome timestamp to JS Date
+      const ms = (chromeMicro / 1000) - 11644473600000;
+      const dt = new Date(ms);
+      const domain = extractDomain(r[1]);
+      const durationSec = Math.round(r[3] / 1000000);
+      return { time: dt, url: r[1] || '', title: r[2] || r[1] || '(no title)', domain, durationSec };
+    });
+
+    db.close();
+    computeEngaged();
+    initUI();
+    showLoading(false);
+    return true;
+  } catch(err) {
+    showError('Could not parse file: ' + err.message + '. Make sure Chrome is closed before copying the History file.');
+    showLoading(false);
+    return false;
+  }
+}
+
+// The last imported file is kept in IndexedDB (localStorage is too small
+// for a multi-MB SQLite db) so the page restores it on next visit.
+function idb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('chtt', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('files');
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function saveFileBuffer(buffer, name) {
+  try {
+    const db = await idb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('files', 'readwrite');
+      tx.objectStore('files').put({ buffer, name, savedAt: Date.now() }, 'last');
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch {}
+}
+
+async function loadSavedFile() {
+  try {
+    const db = await idb();
+    return await new Promise((resolve, reject) => {
+      const req = db.transaction('files').objectStore('files').get('last');
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  } catch { return null; }
+}
+
+async function clearSavedFile() {
+  try {
+    const db = await idb();
+    db.transaction('files', 'readwrite').objectStore('files').delete('last');
+  } catch {}
+}
+
+function showSavedNote(name, savedAt, restored) {
+  const el = document.getElementById('savedNote');
+  const when = new Date(savedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+  el.textContent = (restored ? 'Restored last import' : 'Import saved in this browser') +
+    ` — ${name}, ${when}. “⬆ New file” replaces it; data never leaves this device.`;
+  el.style.display = 'block';
+}
+
+(async () => {
+  const saved = await loadSavedFile();
+  if (!saved || !saved.buffer) return;
+  if (await parseBuffer(saved.buffer)) {
+    showSavedNote(saved.name || 'History', saved.savedAt || Date.now(), true);
+  } else {
+    clearSavedFile();
+  }
+})();
 
 function timeRange() {
   let min = Infinity, max = -Infinity;
@@ -917,6 +1000,27 @@ document.getElementById('rulesBody').addEventListener('click', e => {
   renderRules();
   if (allRows.length) { refreshClientFilter(); renderTable(); }
 });
+
+function applyMappings() {
+  save('chtt-rules', rules);
+  const out = document.getElementById('applyResult');
+  if (!allRows.length) {
+    out.textContent = 'Import a History file first.';
+    return;
+  }
+  let matched = 0;
+  const clients = new Set();
+  for (const r of allRows) {
+    const rl = ruleFor(r.url);
+    if (rl) {
+      matched++;
+      if ((rl.client || '').trim()) clients.add(rl.client.trim());
+    }
+  }
+  refreshClientFilter();
+  applyFilters();
+  out.textContent = `${matched.toLocaleString()} of ${allRows.length.toLocaleString()} rows match — ${clients.size} client(s). Table, filter, and report updated.`;
+}
 
 document.getElementById('idleCap').addEventListener('change', e => {
   idleCapMin = Math.min(60, Math.max(1, +e.target.value || 15));
