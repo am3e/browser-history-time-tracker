@@ -607,7 +607,14 @@
   <div class="panel" id="autoMapPanel">
     <div class="panel-title">Auto-map Domains</div>
     <p class="panel-help">Every domain in your import, deduped — map each once instead of tagging row by row. Manual row tags and URL rules override these. Check <strong>Hide</strong> to drop a domain from the table, report, and exports entirely.</p>
-    <input type="text" id="autoMapSearch" placeholder="filter domains...">
+    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap">
+      <input type="text" id="autoMapSearch" placeholder="filter domains...">
+      <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);margin-left:auto">Auto-hide under</span>
+      <input type="number" id="hideThreshold" min="1" value="20" style="width:64px">
+      <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted)">visits</span>
+      <button class="btn btn-secondary" onclick="autoHideSmall()">Auto-hide</button>
+      <button class="btn btn-secondary" onclick="unhideAll()">Unhide all</button>
+    </div>
     <div class="automap-scroll">
       <table class="rules-table">
         <thead><tr><th>Domain</th><th>Site</th><th>Visits</th><th>Est. hrs</th><th style="width:16%">Client</th><th style="width:16%">Project</th><th>Hide</th></tr></thead>
@@ -830,6 +837,7 @@ function initUI() {
   document.getElementById('statRange').textContent = fmtDate(minD) + ' → ' + fmtDate(maxD);
   
   document.getElementById('idleCap').value = idleCapMin;
+  document.getElementById('hideThreshold').value = load('chtt-hide-threshold', 20);
   renderRules();
   refreshClientFilter();
 
@@ -1150,6 +1158,45 @@ document.getElementById('autoMapBody').addEventListener('change', e => {
 });
 
 document.getElementById('autoMapSearch').addEventListener('input', renderAutoMap);
+
+// Bulk-hide low-traffic domains. Domains carrying any client/project tag
+// (domain map, URL rule, or manual row tag) are never auto-hidden so
+// billable rows can't silently drop out of the report.
+function autoHideSmall() {
+  if (!allRows.length) return;
+  if (!autoMapStats) autoMapStats = buildAutoMapStats();
+  const th = Math.max(1, +document.getElementById('hideThreshold').value || 20);
+  save('chtt-hide-threshold', th);
+
+  const protectedDomains = new Set();
+  for (const r of allRows) {
+    if (effTag(r, 'client').val || effTag(r, 'project').val) protectedDomains.add(r.domain);
+  }
+
+  let hidden = 0;
+  for (const d of Object.keys(autoMapStats)) {
+    if (autoMapStats[d].count >= th || protectedDomains.has(d)) continue;
+    const m = domainMap[d] = domainMap[d] || {};
+    if (!m.hide) { m.hide = true; hidden++; }
+  }
+  save('chtt-domain-map', domainMap);
+  refreshClientFilter();
+  applyFilters();
+  renderAutoMap();
+  const el = document.getElementById('hiddenSummary');
+  el.textContent = `Auto-hid ${hidden.toLocaleString()} domain(s) under ${th} visits (mapped domains skipped). ` + el.textContent;
+}
+
+function unhideAll() {
+  for (const d of Object.keys(domainMap)) {
+    delete domainMap[d].hide;
+    if (!(domainMap[d].client || '').trim() && !(domainMap[d].project || '').trim()) delete domainMap[d];
+  }
+  save('chtt-domain-map', domainMap);
+  refreshClientFilter();
+  applyFilters();
+  renderAutoMap();
+}
 
 function buildReportAgg() {
   const agg = {};
